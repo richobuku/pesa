@@ -1,0 +1,10 @@
+node_modules/
+.env
+.DS_Store
+*.log
+store/
+bridge/store/
+*.b64
+*service_account*.json
+dist/
+build/

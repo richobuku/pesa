@@ -1,0 +1,73 @@
+services:
+  - type: web
+    name: pesa-agent
+    env: docker
+    plan: starter
+    dockerfilePath: ./Dockerfile
+    healthCheckPath: /health
+    disk:
+      name: pesa-store
+      mountPath: /app/store
+      sizeGB: 1
+    envVars:
+      - fromGroup: pesa-secrets
+      - key: NODE_ENV
+        value: production
+      - key: TIMEZONE
+        value: Africa/Kampala
+      - key: STORE_DIR
+        value: /app/store
+      - key: WHATSAPP_BRIDGE_URL
+        value: http://localhost:8080
+      - key: WHATSAPP_BRIDGE_DB_PATH
+        value: /app/store/messages.db
+      - key: PORT
+        value: 3000
+
+  - type: cron
+    name: pesa-daily-checkin
+    env: docker
+    dockerfilePath: ./Dockerfile
+    schedule: "30 17 * * *" # 20:30 EAT (UTC+3)
+    dockerCommand: npm run ping -- daily
+    envVars:
+      - fromGroup: pesa-secrets
+
+  - type: cron
+    name: pesa-weekly-review
+    env: docker
+    dockerfilePath: ./Dockerfile
+    schedule: "0 15 * * 0" # Sunday 18:00 EAT (UTC+3)
+    dockerCommand: npm run ping -- weekly
+    envVars:
+      - fromGroup: pesa-secrets
+
+envVarGroups:
+  - name: pesa-secrets
+    envVars:
+      - key: SPREADSHEET_ID
+        value: 1K3g7mHvba2-AdwjvASYUwW7AvpFwyGXBqtKcIqJmrv0
+      - key: GOOGLE_SERVICE_ACCOUNT_JSON
+        sync: false
+      - key: GOOGLE_WEBHOOK_URL
+        sync: false
+      - key: ANTHROPIC_API_KEY
+        sync: false
+      - key: CLAUDE_MODEL
+        value: claude-sonnet-4-5
+      - key: GROQ_API_KEY
+        sync: false
+      - key: TRANSCRIBE_PROVIDER
+        value: groq
+      - key: TRANSCRIBE_API_KEY
+        sync: false
+      - key: TRANSCRIBE_LANGUAGE
+        value: en
+      - key: ALLOWED_NUMBERS
+        value: "256774963756"
+      - key: WHATSAPP_SESSION_B64
+        sync: false
+      - key: CRON_SECRET
+        generateValue: true
+      - key: APP_URL
+        sync: false

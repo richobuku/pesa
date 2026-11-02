@@ -1,0 +1,28 @@
+{
+  "name": "pesa",
+  "version": "1.0.0",
+  "description": "Pesa — WhatsApp finance agent for the Budget Tracker Google Sheet",
+  "type": "module",
+  "main": "src/index.js",
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "scripts": {
+    "start": "node src/index.js",
+    "dev": "node --watch src/index.js",
+    "chat": "node scripts/chat.js",
+    "transcribe": "node scripts/transcribe.js",
+    "check-sheet": "node scripts/check-sheet.js",
+    "repair-formulas": "node scripts/repair-formulas.js",
+    "ping": "node scripts/ping.js",
+    "export-session": "node scripts/export-session.js",
+    "test": "node --test test/*.test.js"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.39.0",
+    "dotenv": "^16.4.7",
+    "ffmpeg-static": "^5.2.0",
+    "googleapis": "^144.0.0"
+  }
+}
+
