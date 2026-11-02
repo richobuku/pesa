@@ -110,6 +110,45 @@ npm run transcribe -- note.ogg   # check voice-note transcription
 npm test                # 25 offline tests
 ```
 
+## 24/7 Cloud Deployment (Option B: Linked Device Container)
+
+To keep Pesa running **24/7 without needing your MacBook Air awake**, deploy the Docker container to a cloud host with persistent disk storage (e.g. **Render**, **Railway**, or a **VPS**).
+
+The container bundles:
+1. **The Go WhatsApp Bridge** (`whatsmeow`), connecting directly to WhatsApp as a Linked Device.
+2. **The Node.js Pesa Agent**, processing financial entries, calculations, and Google Sheets updates.
+3. A persistent volume mounted at `/app/store` preserving your session keys (`whatsapp.db`) across restarts.
+
+### Step 1: Push Pesa to your GitHub
+```bash
+cd ~/pesa
+# Create a new private repository on github.com (e.g. github.com/your-username/pesa)
+git remote add origin git@github.com:YOUR_USERNAME/pesa.git
+git branch -M main
+git push -u origin main
+```
+
+### Step 2: Deploy on Render (with Persistent Disk)
+1. Go to [dashboard.render.com](https://dashboard.render.com) and click **New +** → **Blueprint**.
+2. Select your `pesa` repository. Render automatically reads `render.yaml`.
+3. In the environment group (`pesa-secrets`), set your secrets:
+   - `SPREADSHEET_ID`: `1K3g7mHvba2-AdwjvASYUwW7AvpFwyGXBqtKcIqJmrv0`
+   - `GOOGLE_SERVICE_ACCOUNT_JSON`: (paste your Google Service Account key JSON)
+   - `ANTHROPIC_API_KEY`: (your Claude API key) or `GROQ_API_KEY`: (for Groq fallback)
+   - `ALLOWED_NUMBERS`: `256774963756`
+   - `WHATSAPP_SESSION_B64`: *(optional)* run `npm run export-session` to paste your existing pre-authenticated session, or leave blank to scan the QR code.
+4. Click **Apply**. Render will build the Docker container and attach the 1GB persistent disk.
+
+### Step 3: Link Your WhatsApp
+- If you did not supply `WHATSAPP_SESSION_B64`:
+  1. Open the **Logs** tab in Render for `pesa-agent`.
+  2. You will see a QR code printed in the logs.
+  3. On your phone: Open **WhatsApp** → **Settings** (or 3 dots) → **Linked Devices** → **Link a Device**.
+  4. Point your camera at the QR code in the log.
+  5. Once linked, the keys are permanently saved to `/app/store/whatsapp.db`. It will never ask to scan again!
+
+---
+
 ## Clean the sheet before go-live
 
 `npm run check-sheet` finds the following in the current workbook. They distort the totals the advice is based on:
