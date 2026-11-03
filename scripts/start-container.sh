@@ -58,3 +58,4 @@ node src/index.js &
 NODE_PID=$!
 
 wait -n "$BRIDGE_PID" "$NODE_PID"
+

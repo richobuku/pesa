@@ -51,3 +51,4 @@ console.log(`      Key:   WHATSAPP_SESSION_B64`);
 console.log(`      Value: (paste contents of whatsapp_session.b64)`);
 console.log(`\nAlternatively, if you prefer, you can skip this env var and simply scan`);
 console.log(`the QR code once directly in the Render deploy log when the container starts!`);
+

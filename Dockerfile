@@ -6,8 +6,9 @@
 # ==============================================================================
 
 # --- Stage 1: Build the Go WhatsApp Bridge ---
-FROM golang:1.22-bookworm AS bridge-builder
+FROM golang:bookworm AS bridge-builder
 WORKDIR /build
+ENV GOTOOLCHAIN=auto
 
 # Install CGO build dependencies for go-sqlite3
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -62,3 +63,4 @@ ENV PORT=3000
 # Make startup script executable and run
 RUN chmod +x /app/scripts/start-container.sh
 CMD ["/app/scripts/start-container.sh"]
+
