@@ -233,6 +233,8 @@ func sendWhatsAppMessage(client *whatsmeow.Client, recipient string, message str
 		if err != nil {
 			return false, fmt.Sprintf("Error parsing JID: %v", err)
 		}
+		// Strip any device (:40) component so it routes directly to the chat
+		recipientJID = recipientJID.ToNonAD()
 	} else {
 		// Create JID from phone number
 		recipientJID = types.JID{

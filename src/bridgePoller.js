@@ -55,32 +55,36 @@ export function startBridgePoller({
     .map((n) => n.trim().replace(/\D/g, ''))
     .filter(Boolean);
 
-  //Also lookup the device's own LID from whatsapp.db if present so self-chat via @lid works seamlessly
+  // Keep set of self identities (phone number, jid, and device lid)
   const selfIdentities = new Set(allowedList);
   const whatsappDbPath = dbPath.replace(/messages\.db$/, 'whatsapp.db');
-  if (fs.existsSync(whatsappDbPath)) {
-    execFileAsync('sqlite3', ['-json', whatsappDbPath, 'SELECT jid, lid FROM whatsmeow_device LIMIT 1;'])
-      .then(({ stdout }) => {
+
+  const refreshSelfIdentities = async () => {
+    if (fs.existsSync(whatsappDbPath)) {
+      try {
+        const { stdout } = await execFileAsync('sqlite3', ['-json', whatsappDbPath, 'SELECT jid, lid FROM whatsmeow_device LIMIT 1;']);
         const rows = JSON.parse(stdout || '[]');
         for (const r of rows) {
           if (r.jid) selfIdentities.add(String(r.jid).split('@')[0].split(':')[0].replace(/\D/g, ''));
           if (r.lid) selfIdentities.add(String(r.lid).split('@')[0].split(':')[0].replace(/\D/g, ''));
         }
-      })
-      .catch(() => {});
-  }
+      } catch {}
+    }
+  };
+  refreshSelfIdentities().catch(() => {});
 
   // Only process messages that arrive after Pesa starts
-  let lastSeenTimestampIso = new Date().toISOString();
+  let lastSeenTimestampIso = new Date(Date.now() - 30000).toISOString();
   const seenIds = new Set();
   const botSentSignatures = new Set();
 
   const pollOnce = async () => {
     try {
+      await refreshSelfIdentities();
       const sql = `
         SELECT id, chat_jid, sender, content, timestamp, is_from_me, media_type, filename
         FROM messages
-        WHERE datetime(timestamp) >= datetime('${lastSeenTimestampIso}', '-10 seconds')
+        WHERE datetime(timestamp) >= datetime('${lastSeenTimestampIso}', '-30 seconds')
         ORDER BY datetime(timestamp) ASC
         LIMIT 20;
       `;
@@ -99,8 +103,9 @@ export function startBridgePoller({
         const chatUser = String(row.chat_jid || '').split('@')[0].split(':')[0].replace(/\D/g, '');
         const senderUser = String(row.sender || '').split('@')[0].split(':')[0].replace(/\D/g, '');
 
-        // Only respond in self-chat (`256774963756@s.whatsapp.net` or own `@lid`)
-        if (!selfIdentities.has(chatUser) || !selfIdentities.has(senderUser)) {
+        // Respond if this message is in self-chat (chat or sender matches our phone/LID)
+        const isSelfChat = selfIdentities.has(chatUser) || selfIdentities.has(senderUser);
+        if (!isSelfChat) {
           continue;
         }
 
@@ -127,16 +132,18 @@ export function startBridgePoller({
         if (type === 'text' && !text) continue;
 
         const canonicalPhone = allowedList[0] || '256774963756';
+        const cleanChatJid = row.chat_jid ? row.chat_jid.replace(/:\d+@/, '@') : `${canonicalPhone}@s.whatsapp.net`;
         const msg = {
           id: row.id,
           from: canonicalPhone,
-          replyTo: row.chat_jid,
-          chatJid: row.chat_jid,
+          replyTo: cleanChatJid,
+          chatJid: cleanChatJid,
           type,
           text,
           filename: row.filename || '',
         };
 
+        console.log(`[bridgePoller] 📩 Processing self-message: "${text || type}" (chat: ${row.chat_jid})`);
         const res = await processIncomingWhatsAppMessage(msg, {
           sheetsClient,
           anthropicClient,
@@ -144,6 +151,7 @@ export function startBridgePoller({
         });
 
         if (res && res.reply) {
+          console.log(`[bridgePoller] 📤 Sent reply to ${msg.replyTo}: "${res.reply.slice(0, 60)}..."`);
           botSentSignatures.add(res.reply.trim());
           if (botSentSignatures.size > 100) {
             const first = botSentSignatures.values().next().value;
@@ -151,8 +159,8 @@ export function startBridgePoller({
           }
         }
       }
-    } catch {
-      // Ignore transient SQLite lock or empty output
+    } catch (err) {
+      console.error('[bridgePoller error]', err);
     }
   };
 
