@@ -314,21 +314,6 @@ export function createWorkbookSheetsApi(workbookState, { webhookUrl = '' } = {})
           for (const item of requestBody?.data || []) {
             applyRangeWrite(item.range, item.values || []);
           }
-          if (webhookUrl) {
-            try {
-              await fetch(webhookUrl, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                  action: 'batchUpdate',
-                  data: requestBody?.data || [],
-                }),
-              });
-              console.log(`[sheets] Synced batchUpdate via Apps Script Webhook (${requestBody?.data?.length || 0} ranges)`);
-            } catch (err) {
-              console.warn('[sheets] Webhook batchUpdate sync failed:', err.message);
-            }
-          }
           return { data: {} };
         },
         batchClear: async ({ requestBody }) => {
@@ -342,21 +327,6 @@ export function createWorkbookSheetsApi(workbookState, { webhookUrl = '' } = {})
                 sh.formulas[r][c] = '';
               }
               recalcRowFormulas(workbookState, sheet, r);
-            }
-          }
-          if (webhookUrl) {
-            try {
-              await fetch(webhookUrl, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                  action: 'batchClear',
-                  ranges: requestBody?.ranges || [],
-                }),
-              });
-              console.log(`[sheets] Synced batchClear via Apps Script Webhook (${requestBody?.ranges?.length || 0} ranges)`);
-            } catch (err) {
-              console.warn('[sheets] Webhook batchClear sync failed:', err.message);
             }
           }
           return { data: {} };

@@ -110,13 +110,14 @@ export class BudgetTrackerClient {
   } = {}) {
     this.spreadsheetId = spreadsheetId;
     this.sheetsApi = sheetsApi;
+    this.connectionMode = sheetsApi ? 'custom-api' : null;
     this.webhookUrl = webhookUrl;
     this._settingsCache = null;
     this._settingsCacheAt = 0;
   }
 
   async _ensureApi() {
-    if (this.sheetsApi) return this.sheetsApi;
+    if (this.sheetsApi && this.connectionMode !== 'live-xlsx-snapshot') return this.sheetsApi;
     const { api, mode } = await createResilientSheetsApi({
       spreadsheetId: this.spreadsheetId,
       webhookUrl: this.webhookUrl,
