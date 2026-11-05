@@ -243,6 +243,16 @@ func sendWhatsAppMessage(client *whatsmeow.Client, recipient string, message str
 		}
 	}
 
+	// If the recipient is an LID or matches our own client account, normalize to personal chat JID
+	if client.Store.ID != nil {
+		if recipientJID.Server == "lid" || recipientJID.User == client.Store.ID.User {
+			recipientJID = types.JID{
+				User:   client.Store.ID.User,
+				Server: "s.whatsapp.net",
+			}
+		}
+	}
+
 	msg := &waProto.Message{}
 
 	// Check if we have media to send

@@ -7,6 +7,8 @@
  *   / `meta-llama/llama-4-scout-17b-16e-instruct` for images) with the exact same tools and system prompt.
  */
 
+import fs from 'fs';
+import path from 'path';
 import Anthropic from '@anthropic-ai/sdk';
 import { buildSystemPrompt } from './prompt.js';
 import { buildToolDefinitions, executeToolCall } from './tools.js';
@@ -16,15 +18,52 @@ const MAX_TOOL_ITERATIONS = 8;
 
 const chatHistoryByUser = new Map(); // userKey -> [{ role, content }]
 
+function getHistoryFilePath() {
+  const storeDir = process.env.STORE_DIR || (fs.existsSync('/app/store') ? '/app/store' : null);
+  if (storeDir && fs.existsSync(storeDir)) {
+    return path.join(storeDir, 'chat_history.json');
+  }
+  return null;
+}
+
+let historyLoaded = false;
+function ensureHistoryLoaded() {
+  if (historyLoaded) return;
+  historyLoaded = true;
+  const filePath = getHistoryFilePath();
+  if (filePath && fs.existsSync(filePath)) {
+    try {
+      const data = JSON.parse(fs.readFileSync(filePath, 'utf8'));
+      for (const [k, v] of Object.entries(data)) {
+        if (Array.isArray(v)) chatHistoryByUser.set(k, v);
+      }
+    } catch {}
+  }
+}
+
+function persistHistoryToDisk() {
+  const filePath = getHistoryFilePath();
+  if (filePath) {
+    try {
+      const obj = Object.fromEntries(chatHistoryByUser.entries());
+      fs.writeFileSync(filePath, JSON.stringify(obj, null, 2), 'utf8');
+    } catch {}
+  }
+}
+
 export function getChatHistory(userKey = 'default') {
+  ensureHistoryLoaded();
   return chatHistoryByUser.get(userKey) || [];
 }
 
 export function clearChatHistory(userKey = 'default') {
+  ensureHistoryLoaded();
   chatHistoryByUser.delete(userKey);
+  persistHistoryToDisk();
 }
 
 function appendChatHistory(userKey, userText, assistantText) {
+  ensureHistoryLoaded();
   const history = chatHistoryByUser.get(userKey) || [];
   history.push({ role: 'user', content: userText || '[media]' });
   history.push({ role: 'assistant', content: assistantText });
@@ -32,6 +71,7 @@ function appendChatHistory(userKey, userText, assistantText) {
     history.shift();
   }
   chatHistoryByUser.set(userKey, history);
+  persistHistoryToDisk();
 }
 
 /**

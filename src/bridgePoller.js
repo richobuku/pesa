@@ -46,20 +46,24 @@ export function startBridgePoller({
   intervalMs = 2000,
   allowedNumbers = process.env.ALLOWED_NUMBERS || '256774963756',
 } = {}) {
-  if (!dbPath || !fs.existsSync(dbPath)) {
-    return null;
-  }
-
   const allowedList = String(allowedNumbers)
     .split(',')
     .map((n) => n.trim().replace(/\D/g, ''))
     .filter(Boolean);
 
+  const canonicalPhone = allowedList[0] || '256774963756';
+
   // Keep set of self identities (phone number, jid, and device lid)
   const selfIdentities = new Set(allowedList);
-  const whatsappDbPath = dbPath.replace(/messages\.db$/, 'whatsapp.db');
 
-  const refreshSelfIdentities = async () => {
+  let activeDbPath = dbPath;
+  let lastSeenRowId = 0;
+  let initializedRowId = false;
+  const seenIds = new Set();
+  const botSentSignatures = new Set();
+
+  const refreshSelfIdentities = async (currentDbPath) => {
+    const whatsappDbPath = currentDbPath.replace(/messages\.db$/, 'whatsapp.db');
     if (fs.existsSync(whatsappDbPath)) {
       try {
         const { stdout } = await execFileAsync('sqlite3', ['-json', whatsappDbPath, 'SELECT jid, lid FROM whatsmeow_device LIMIT 1;']);
@@ -71,34 +75,54 @@ export function startBridgePoller({
       } catch {}
     }
   };
-  refreshSelfIdentities().catch(() => {});
-
-  // Only process messages that arrive after Pesa starts
-  let lastSeenTimestampIso = new Date(Date.now() - 30000).toISOString();
-  const seenIds = new Set();
-  const botSentSignatures = new Set();
 
   const pollOnce = async () => {
     try {
-      await refreshSelfIdentities();
+      if (!activeDbPath || !fs.existsSync(activeDbPath)) {
+        activeDbPath = resolveBridgeDbPath();
+        if (!activeDbPath || !fs.existsSync(activeDbPath)) {
+          return;
+        }
+        console.log(`🔗 Local WhatsApp bridge watcher connected to database: ${activeDbPath}`);
+      }
+
+      await refreshSelfIdentities(activeDbPath);
+
+      // On first run with active db, initialize lastSeenRowId to current max rowid
+      // to avoid re-processing historical messages on container restart
+      if (!initializedRowId) {
+        try {
+          const { stdout } = await execFileAsync('sqlite3', ['-json', activeDbPath, 'SELECT MAX(rowid) as max_id FROM messages;']);
+          const parsed = JSON.parse(stdout || '[]');
+          if (parsed[0] && typeof parsed[0].max_id === 'number') {
+            lastSeenRowId = parsed[0].max_id;
+          }
+          initializedRowId = true;
+          console.log(`[bridgePoller] Initialized cursor at rowid=${lastSeenRowId}`);
+        } catch {
+          // If query fails (e.g. table not populated yet), retry next turn
+          return;
+        }
+      }
+
       const sql = `
-        SELECT id, chat_jid, sender, content, timestamp, is_from_me, media_type, filename
+        SELECT rowid, id, chat_jid, sender, content, timestamp, is_from_me, media_type, filename
         FROM messages
-        WHERE datetime(timestamp) >= datetime('${lastSeenTimestampIso}', '-30 seconds')
-        ORDER BY datetime(timestamp) ASC
-        LIMIT 20;
+        WHERE rowid > ${lastSeenRowId}
+        ORDER BY rowid ASC
+        LIMIT 50;
       `;
-      const { stdout } = await execFileAsync('sqlite3', ['-json', dbPath, sql]);
+      const { stdout } = await execFileAsync('sqlite3', ['-json', activeDbPath, sql]);
       if (!stdout || !stdout.trim()) return;
 
       const rows = JSON.parse(stdout);
       for (const row of rows) {
+        if (row.rowid && row.rowid > lastSeenRowId) {
+          lastSeenRowId = row.rowid;
+        }
+
         if (!row.id || seenIds.has(row.id)) continue;
         seenIds.add(row.id);
-
-        if (row.timestamp && row.timestamp > lastSeenTimestampIso) {
-          lastSeenTimestampIso = row.timestamp;
-        }
 
         const chatUser = String(row.chat_jid || '').split('@')[0].split(':')[0].replace(/\D/g, '');
         const senderUser = String(row.sender || '').split('@')[0].split(':')[0].replace(/\D/g, '');
@@ -131,8 +155,12 @@ export function startBridgePoller({
 
         if (type === 'text' && !text) continue;
 
-        const canonicalPhone = allowedList[0] || '256774963756';
-        const cleanChatJid = row.chat_jid ? row.chat_jid.replace(/:\d+@/, '@') : `${canonicalPhone}@s.whatsapp.net`;
+        // In self-chat, ALWAYS reply to the canonical personal phone JID (e.g. 256774963756@s.whatsapp.net).
+        // Sending directly to a naked @lid causes WhatsApp error 479/463.
+        const cleanChatJid = isSelfChat
+          ? `${canonicalPhone}@s.whatsapp.net`
+          : (row.chat_jid ? row.chat_jid.replace(/:\d+@/, '@') : `${canonicalPhone}@s.whatsapp.net`);
+
         const msg = {
           id: row.id,
           from: canonicalPhone,
@@ -143,7 +171,7 @@ export function startBridgePoller({
           filename: row.filename || '',
         };
 
-        console.log(`[bridgePoller] 📩 Processing self-message: "${text || type}" (chat: ${row.chat_jid})`);
+        console.log(`[bridgePoller] 📩 Processing self-message #${row.rowid}: "${text || type}" (chat: ${row.chat_jid})`);
         const res = await processIncomingWhatsAppMessage(msg, {
           sheetsClient,
           anthropicClient,
@@ -165,7 +193,11 @@ export function startBridgePoller({
   };
 
   const timer = setInterval(pollOnce, intervalMs);
-  console.log(`🔗 Local WhatsApp bridge watcher active on ${dbPath}`);
+  if (activeDbPath && fs.existsSync(activeDbPath)) {
+    console.log(`🔗 Local WhatsApp bridge watcher active on ${activeDbPath}`);
+  } else {
+    console.log(`⏳ Local WhatsApp bridge watcher waiting for messages.db to be created...`);
+  }
   return () => clearInterval(timer);
 }
 
