@@ -107,20 +107,47 @@ export async function runAgentTurn({
   const toolCallsExecuted = [];
 
   if (anthropicClient || anthropicKey) {
-    const client = anthropicClient || new Anthropic({ apiKey: anthropicKey });
-    replyText = await runAnthropicLoop({
-      client,
-      model: process.env.CLAUDE_MODEL || 'claude-sonnet-4-5',
-      systemPrompt,
-      tools,
-      priorHistory,
-      text,
-      media,
-      sheetsClient,
-      userKey,
-      now,
-      toolCallsExecuted,
-    });
+    try {
+      const client = anthropicClient || new Anthropic({ apiKey: anthropicKey });
+      replyText = await runAnthropicLoop({
+        client,
+        model: process.env.CLAUDE_MODEL || 'claude-sonnet-4-5',
+        systemPrompt,
+        tools,
+        priorHistory,
+        text,
+        media,
+        sheetsClient,
+        userKey,
+        now,
+        toolCallsExecuted,
+      });
+    } catch (err) {
+      const isCreditOrAuthError =
+        err.status === 400 ||
+        err.status === 402 ||
+        err.status === 401 ||
+        String(err.message || '').toLowerCase().includes('credit') ||
+        String(err.message || '').toLowerCase().includes('balance');
+
+      if (groqKey && isCreditOrAuthError) {
+        console.warn(`[agent] Anthropic API failed (${err.message}). Falling back to Groq Llama 3.3...`);
+        replyText = await runGroqFallbackLoop({
+          apiKey: groqKey,
+          systemPrompt,
+          tools,
+          priorHistory,
+          text,
+          media,
+          sheetsClient,
+          userKey,
+          now,
+          toolCallsExecuted,
+        });
+      } else {
+        throw err;
+      }
+    }
   } else if (groqKey) {
     replyText = await runGroqFallbackLoop({
       apiKey: groqKey,
@@ -351,10 +378,10 @@ async function runGroqFallbackLoop({
   }));
 
   let userMessageContent = text || 'Please log this receipt.';
-  let model = process.env.GROQ_MODEL || 'openai/gpt-oss-120b';
+  let model = process.env.GROQ_MODEL || 'llama-3.3-70b-versatile';
 
   if (media && media.buffer && String(media.mimeType).startsWith('image/')) {
-    model = process.env.GROQ_VISION_MODEL || 'openai/gpt-oss-120b';
+    model = process.env.GROQ_VISION_MODEL || 'llama-3.2-11b-vision-preview';
     const b64 = Buffer.from(media.buffer).toString('base64');
     userMessageContent = [
       {
@@ -375,9 +402,9 @@ async function runGroqFallbackLoop({
   ];
 
   const candidateModels = [
-    process.env.GROQ_MODEL || 'openai/gpt-oss-20b',
-    'openai/gpt-oss-120b',
-    'openai/gpt-oss-20b',
+    process.env.GROQ_MODEL || 'llama-3.3-70b-versatile',
+    'llama-3.1-8b-instant',
+    'llama-3.3-70b-versatile',
   ];
 
   for (let iter = 0; iter < MAX_TOOL_ITERATIONS; iter++) {

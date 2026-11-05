@@ -13,6 +13,7 @@ import fs from 'fs';
 import { execFile } from 'child_process';
 import { promisify } from 'util';
 import { processIncomingWhatsAppMessage } from './index.js';
+import { sendWhatsAppMessage } from './whatsapp.js';
 
 const execFileAsync = promisify(execFile);
 
@@ -172,19 +173,29 @@ export function startBridgePoller({
         };
 
         console.log(`[bridgePoller] 📩 Processing self-message #${row.rowid}: "${text || type}" (chat: ${row.chat_jid})`);
-        const res = await processIncomingWhatsAppMessage(msg, {
-          sheetsClient,
-          anthropicClient,
-          allowedNumbers,
-        });
+        try {
+          const res = await processIncomingWhatsAppMessage(msg, {
+            sheetsClient,
+            anthropicClient,
+            allowedNumbers,
+          });
 
-        if (res && res.reply) {
-          console.log(`[bridgePoller] 📤 Sent reply to ${msg.replyTo}: "${res.reply.slice(0, 60)}..."`);
-          botSentSignatures.add(res.reply.trim());
-          if (botSentSignatures.size > 100) {
-            const first = botSentSignatures.values().next().value;
-            botSentSignatures.delete(first);
+          if (res && res.reply) {
+            console.log(`[bridgePoller] 📤 Sent reply to ${msg.replyTo}: "${res.reply.slice(0, 60)}..."`);
+            botSentSignatures.add(res.reply.trim());
+            if (botSentSignatures.size > 100) {
+              const first = botSentSignatures.values().next().value;
+              botSentSignatures.delete(first);
+            }
           }
+        } catch (turnErr) {
+          console.error(`[bridgePoller] Turn execution error:`, turnErr);
+          const errStr = String(turnErr.message || turnErr);
+          let userMsg = '⚠️ Pesa encountered an issue while processing your message.';
+          if (errStr.includes('credit balance is too low')) {
+            userMsg = '⚠️ Anthropic credit balance is too low. Please top up at console.anthropic.com or configure GROQ_API_KEY in Render.';
+          }
+          await sendWhatsAppMessage(cleanChatJid, userMsg).catch(() => {});
         }
       }
     } catch (err) {
