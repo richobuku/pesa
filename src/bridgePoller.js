@@ -191,7 +191,7 @@ export function startBridgePoller({
         } catch (turnErr) {
           console.error(`[bridgePoller] Turn execution error:`, turnErr);
           const errStr = String(turnErr.message || turnErr);
-          let userMsg = '⚠️ Pesa encountered an issue while processing your message.';
+          let userMsg = `⚠️ Pesa encountered an error: ${errStr.slice(0, 140)}`;
           if (errStr.includes('credit balance is too low')) {
             userMsg = '⚠️ Anthropic credit balance is too low. Please top up at console.anthropic.com or configure GROQ_API_KEY in Render.';
           }

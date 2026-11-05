@@ -353,6 +353,28 @@ function normalizeSchemaForOpenAi(schema) {
   return copy;
 }
 
+async function getAvailableGroqChatModels(apiKey) {
+  try {
+    const res = await fetch('https://api.groq.com/openai/v1/models', {
+      headers: { Authorization: `Bearer ${apiKey}` },
+    });
+    if (res.ok) {
+      const data = await res.json();
+      const allIds = (data.data || []).map((m) => m.id);
+      return allIds.filter(
+        (id) =>
+          !id.includes('whisper') &&
+          !id.includes('orpheus') &&
+          !id.includes('guard') &&
+          !id.includes('safeguard')
+      );
+    }
+  } catch (err) {
+    console.warn('[agent] Failed to query Groq models:', err.message);
+  }
+  return [];
+}
+
 /**
  * OpenAI-compatible Groq tool-use loop fallback when `ANTHROPIC_API_KEY` is not yet configured.
  */
@@ -378,10 +400,8 @@ async function runGroqFallbackLoop({
   }));
 
   let userMessageContent = text || 'Please log this receipt.';
-  let model = process.env.GROQ_MODEL || 'llama-3.3-70b-versatile';
 
   if (media && media.buffer && String(media.mimeType).startsWith('image/')) {
-    model = process.env.GROQ_VISION_MODEL || 'llama-3.2-11b-vision-preview';
     const b64 = Buffer.from(media.buffer).toString('base64');
     userMessageContent = [
       {
@@ -401,11 +421,31 @@ async function runGroqFallbackLoop({
     { role: 'user', content: userMessageContent },
   ];
 
-  const candidateModels = [
-    process.env.GROQ_MODEL || 'llama-3.3-70b-versatile',
+  const availableModels = await getAvailableGroqChatModels(apiKey);
+  if (availableModels.length > 0) {
+    console.log(`[agent] Active Groq models on account:`, availableModels.join(', '));
+  }
+
+  const preferred = [
+    process.env.GROQ_MODEL,
     'llama-3.1-8b-instant',
+    'openai/gpt-oss-120b',
+    'openai/gpt-oss-20b',
     'llama-3.3-70b-versatile',
-  ];
+  ].filter(Boolean);
+
+  const candidateModels = [];
+  for (const p of preferred) {
+    if (availableModels.length === 0 || availableModels.includes(p)) {
+      if (!candidateModels.includes(p)) candidateModels.push(p);
+    }
+  }
+  for (const m of availableModels) {
+    if (!candidateModels.includes(m)) candidateModels.push(m);
+  }
+  if (candidateModels.length === 0) {
+    candidateModels.push('llama-3.1-8b-instant');
+  }
 
   for (let iter = 0; iter < MAX_TOOL_ITERATIONS; iter++) {
     let data = null;
@@ -414,6 +454,8 @@ async function runGroqFallbackLoop({
 
     for (let mIdx = 0; mIdx < candidateModels.length; mIdx++) {
       const activeModel = candidateModels[mIdx];
+      console.log(`[agent] Trying Groq model (${mIdx + 1}/${candidateModels.length}): ${activeModel}...`);
+
       const res = await fetch('https://api.groq.com/openai/v1/chat/completions', {
         method: 'POST',
         headers: {
@@ -436,6 +478,7 @@ async function runGroqFallbackLoop({
 
       lastStatus = res.status;
       lastErrText = await res.text().catch(() => '');
+      console.warn(`[agent] Groq model ${activeModel} failed (${lastStatus}): ${lastErrText}`);
 
       // On 429 rate-limit, wait for reset window and retry
       if (res.status === 429) {
@@ -445,7 +488,7 @@ async function runGroqFallbackLoop({
         continue;
       }
 
-      // On 404 model_not_found, try next candidate model immediately
+      // On 404 model_not_found or 400 schema error, try next candidate model immediately
       if (res.status === 404 || res.status === 400) {
         continue;
       }
