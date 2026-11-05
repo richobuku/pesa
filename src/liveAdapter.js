@@ -314,6 +314,21 @@ export function createWorkbookSheetsApi(workbookState, { webhookUrl = '' } = {})
           for (const item of requestBody?.data || []) {
             applyRangeWrite(item.range, item.values || []);
           }
+          if (webhookUrl) {
+            try {
+              await fetch(webhookUrl, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                  action: 'batchUpdate',
+                  data: requestBody?.data || [],
+                }),
+              });
+              console.log(`[sheets] Synced batchUpdate via Apps Script Webhook (${requestBody?.data?.length || 0} ranges)`);
+            } catch (err) {
+              console.warn('[sheets] Webhook batchUpdate sync failed:', err.message);
+            }
+          }
           return { data: {} };
         },
         batchClear: async ({ requestBody }) => {
@@ -327,6 +342,21 @@ export function createWorkbookSheetsApi(workbookState, { webhookUrl = '' } = {})
                 sh.formulas[r][c] = '';
               }
               recalcRowFormulas(workbookState, sheet, r);
+            }
+          }
+          if (webhookUrl) {
+            try {
+              await fetch(webhookUrl, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                  action: 'batchClear',
+                  ranges: requestBody?.ranges || [],
+                }),
+              });
+              console.log(`[sheets] Synced batchClear via Apps Script Webhook (${requestBody?.ranges?.length || 0} ranges)`);
+            } catch (err) {
+              console.warn('[sheets] Webhook batchClear sync failed:', err.message);
             }
           }
           return { data: {} };
@@ -427,19 +457,21 @@ export async function createResilientSheetsApi({
   spreadsheetId = process.env.SPREADSHEET_ID || DEFAULT_SPREADSHEET_ID,
   localCachePath = '/tmp/budget_tracker_live.xlsx',
   tryGoogleApi = true,
+  webhookUrl = process.env.GOOGLE_WEBHOOK_URL || '',
 } = {}) {
   if (tryGoogleApi) {
     try {
       const googleApi = createGoogleSheetsApi();
       if (googleApi) {
-        await googleApi.spreadsheets.get({
+        const res = await googleApi.spreadsheets.get({
           spreadsheetId,
           fields: 'properties.title',
         });
+        console.log(`[sheets] Connected to Google Sheets API: "${res.data.properties?.title || spreadsheetId}" (mode: google-sheets-api)`);
         return { api: googleApi, mode: 'google-sheets-api' };
       }
-    } catch {
-      // Fall through to live XLSX / Apps Script snapshot mode
+    } catch (err) {
+      console.warn(`[sheets] Google Sheets API auth failed (${err.message}). Checking fallback...`);
     }
   }
 
@@ -460,8 +492,9 @@ export async function createResilientSheetsApi({
 
   if (xlsxBuf) {
     const state = parseXlsxBuffer(xlsxBuf);
+    console.warn(`[sheets] Running in fallback mode: live-xlsx-snapshot${webhookUrl ? ' (with Google Apps Script Webhook writes)' : ' (READ-ONLY IN-MEMORY - NO WRITES PERSIST TO GOOGLE SHEETS!)'}`);
     return {
-      api: createWorkbookSheetsApi(state),
+      api: createWorkbookSheetsApi(state, { webhookUrl }),
       mode: 'live-xlsx-snapshot',
     };
   }

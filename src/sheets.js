@@ -119,6 +119,7 @@ export class BudgetTrackerClient {
     if (this.sheetsApi) return this.sheetsApi;
     const { api, mode } = await createResilientSheetsApi({
       spreadsheetId: this.spreadsheetId,
+      webhookUrl: this.webhookUrl,
     });
     this.sheetsApi = api;
     this.connectionMode = mode;
@@ -143,6 +144,7 @@ export class BudgetTrackerClient {
       if (this.connectionMode !== 'live-xlsx-snapshot') {
         const { api: fallbackApi, mode } = await createResilientSheetsApi({
           spreadsheetId: this.spreadsheetId,
+          webhookUrl: this.webhookUrl,
         });
         this.sheetsApi = fallbackApi;
         this.connectionMode = mode;
@@ -175,6 +177,7 @@ export class BudgetTrackerClient {
       if (this.connectionMode !== 'live-xlsx-snapshot') {
         const { api: fallbackApi, mode } = await createResilientSheetsApi({
           spreadsheetId: this.spreadsheetId,
+          webhookUrl: this.webhookUrl,
         });
         this.sheetsApi = fallbackApi;
         this.connectionMode = mode;
@@ -206,6 +209,7 @@ export class BudgetTrackerClient {
       if (this.connectionMode !== 'live-xlsx-snapshot') {
         const { api: fallbackApi, mode } = await createResilientSheetsApi({
           spreadsheetId: this.spreadsheetId,
+          webhookUrl: this.webhookUrl,
         });
         this.sheetsApi = fallbackApi;
         this.connectionMode = mode;
@@ -237,6 +241,7 @@ export class BudgetTrackerClient {
       if (this.connectionMode !== 'live-xlsx-snapshot') {
         const { api: fallbackApi, mode } = await createResilientSheetsApi({
           spreadsheetId: this.spreadsheetId,
+          webhookUrl: this.webhookUrl,
         });
         this.sheetsApi = fallbackApi;
         this.connectionMode = mode;
