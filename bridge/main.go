@@ -403,20 +403,32 @@ func extractMediaInfo(msg *waProto.Message) (mediaType string, filename string, 
 
 	// Check for image message
 	if img := msg.GetImageMessage(); img != nil {
+		dp := img.GetDirectPath()
+		if dp == "" {
+			dp = img.GetURL()
+		}
 		return "image", "image_" + time.Now().Format("20060102_150405") + ".jpg",
-			img.GetURL(), img.GetMediaKey(), img.GetFileSHA256(), img.GetFileEncSHA256(), img.GetFileLength()
+			dp, img.GetMediaKey(), img.GetFileSHA256(), img.GetFileEncSHA256(), img.GetFileLength()
 	}
 
 	// Check for video message
 	if vid := msg.GetVideoMessage(); vid != nil {
+		dp := vid.GetDirectPath()
+		if dp == "" {
+			dp = vid.GetURL()
+		}
 		return "video", "video_" + time.Now().Format("20060102_150405") + ".mp4",
-			vid.GetURL(), vid.GetMediaKey(), vid.GetFileSHA256(), vid.GetFileEncSHA256(), vid.GetFileLength()
+			dp, vid.GetMediaKey(), vid.GetFileSHA256(), vid.GetFileEncSHA256(), vid.GetFileLength()
 	}
 
 	// Check for audio message
 	if aud := msg.GetAudioMessage(); aud != nil {
+		dp := aud.GetDirectPath()
+		if dp == "" {
+			dp = aud.GetURL()
+		}
 		return "audio", "audio_" + time.Now().Format("20060102_150405") + ".ogg",
-			aud.GetURL(), aud.GetMediaKey(), aud.GetFileSHA256(), aud.GetFileEncSHA256(), aud.GetFileLength()
+			dp, aud.GetMediaKey(), aud.GetFileSHA256(), aud.GetFileEncSHA256(), aud.GetFileLength()
 	}
 
 	// Check for document message
@@ -425,8 +437,12 @@ func extractMediaInfo(msg *waProto.Message) (mediaType string, filename string, 
 		if filename == "" {
 			filename = "document_" + time.Now().Format("20060102_150405")
 		}
+		dp := doc.GetDirectPath()
+		if dp == "" {
+			dp = doc.GetURL()
+		}
 		return "document", filename,
-			doc.GetURL(), doc.GetMediaKey(), doc.GetFileSHA256(), doc.GetFileEncSHA256(), doc.GetFileLength()
+			dp, doc.GetMediaKey(), doc.GetFileSHA256(), doc.GetFileEncSHA256(), doc.GetFileLength()
 	}
 
 	return "", "", "", nil, nil, nil, 0
@@ -523,17 +539,26 @@ func (store *MessageStore) GetMediaInfo(id, chatJID string) (string, string, str
 	var mediaKey, fileSHA256, fileEncSHA256 []byte
 	var fileLength uint64
 
-	err := store.db.QueryRow(
-		"SELECT media_type, filename, url, media_key, file_sha256, file_enc_sha256, file_length FROM messages WHERE id = ? AND chat_jid = ?",
-		id, chatJID,
-	).Scan(&mediaType, &filename, &url, &mediaKey, &fileSHA256, &fileEncSHA256, &fileLength)
+	var err error
+	if chatJID != "" {
+		err = store.db.QueryRow(
+			"SELECT media_type, filename, url, media_key, file_sha256, file_enc_sha256, file_length FROM messages WHERE id = ? AND chat_jid = ?",
+			id, chatJID,
+		).Scan(&mediaType, &filename, &url, &mediaKey, &fileSHA256, &fileEncSHA256, &fileLength)
+	}
+
+	if err != nil || chatJID == "" {
+		err = store.db.QueryRow(
+			"SELECT media_type, filename, url, media_key, file_sha256, file_enc_sha256, file_length FROM messages WHERE id = ? ORDER BY rowid DESC LIMIT 1",
+			id,
+		).Scan(&mediaType, &filename, &url, &mediaKey, &fileSHA256, &fileEncSHA256, &fileLength)
+	}
 
 	return mediaType, filename, url, mediaKey, fileSHA256, fileEncSHA256, fileLength, err
 }
 
 // MediaDownloader implements the whatsmeow.DownloadableMessage interface
 type MediaDownloader struct {
-	URL           string
 	DirectPath    string
 	MediaKey      []byte
 	FileLength    uint64
@@ -549,7 +574,7 @@ func (d *MediaDownloader) GetDirectPath() string {
 
 // GetURL implements the DownloadableMessage interface
 func (d *MediaDownloader) GetURL() string {
-	return d.URL
+	return ""
 }
 
 // GetMediaKey implements the DownloadableMessage interface
@@ -589,19 +614,11 @@ func downloadMedia(client *whatsmeow.Client, messageStore *MessageStore, message
 	chatDir := filepath.Join(getStoreDir(), strings.ReplaceAll(chatJID, ":", "_"))
 	localPath := ""
 
-	// Get media info from the database
+	// Get media info from the database (tries chatJID first, then fallback to id alone)
 	mediaType, filename, url, mediaKey, fileSHA256, fileEncSHA256, fileLength, err = messageStore.GetMediaInfo(messageID, chatJID)
 
 	if err != nil {
-		// Try to get basic info if extended info isn't available
-		err = messageStore.db.QueryRow(
-			"SELECT media_type, filename FROM messages WHERE id = ? AND chat_jid = ?",
-			messageID, chatJID,
-		).Scan(&mediaType, &filename)
-
-		if err != nil {
-			return false, "", "", "", fmt.Errorf("failed to find message: %v", err)
-		}
+		return false, "", "", "", fmt.Errorf("failed to find message %s: %v", messageID, err)
 	}
 
 	// Check if this is a media message
@@ -630,8 +647,8 @@ func downloadMedia(client *whatsmeow.Client, messageStore *MessageStore, message
 	}
 
 	// If we don't have all the media info we need, we can't download
-	if url == "" || len(mediaKey) == 0 || len(fileSHA256) == 0 || len(fileEncSHA256) == 0 || fileLength == 0 {
-		return false, "", "", "", fmt.Errorf("incomplete media information for download")
+	if url == "" || len(mediaKey) == 0 || len(fileSHA256) == 0 || len(fileEncSHA256) == 0 {
+		return false, "", "", "", fmt.Errorf("incomplete media information for download (directPath/url: %s, mediaKey: %d bytes)", url, len(mediaKey))
 	}
 
 	fmt.Printf("Attempting to download media for message %s in chat %s...\n", messageID, chatJID)
@@ -655,7 +672,6 @@ func downloadMedia(client *whatsmeow.Client, messageStore *MessageStore, message
 	}
 
 	downloader := &MediaDownloader{
-		URL:           url,
 		DirectPath:    directPath,
 		MediaKey:      mediaKey,
 		FileLength:    fileLength,
@@ -681,8 +697,16 @@ func downloadMedia(client *whatsmeow.Client, messageStore *MessageStore, message
 
 // Extract direct path from a WhatsApp media URL
 func extractDirectPathFromURL(url string) string {
-	// The direct path is typically in the URL, we need to extract it
-	// Example URL: https://mmg.whatsapp.net/v/t62.7118-24/13812002_698058036224062_3424455886509161511_n.enc?ccb=11-4&oh=...
+	if url == "" {
+		return ""
+	}
+	// If it doesn't contain http/https or domain, it's already a direct path
+	if !strings.Contains(url, "://") && !strings.Contains(url, ".net/") {
+		if !strings.HasPrefix(url, "/") {
+			return "/" + url
+		}
+		return url
+	}
 
 	// Find the path part after the domain
 	parts := strings.SplitN(url, ".net/", 2)

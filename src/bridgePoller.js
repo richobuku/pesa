@@ -166,7 +166,7 @@ export function startBridgePoller({
           id: row.id,
           from: canonicalPhone,
           replyTo: cleanChatJid,
-          chatJid: cleanChatJid,
+          chatJid: row.chat_jid || cleanChatJid,
           type,
           text,
           filename: row.filename || '',

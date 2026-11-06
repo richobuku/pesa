@@ -220,7 +220,14 @@ export async function downloadWhatsAppMedia(
       }),
     });
     if (!res.ok) {
-      throw new Error(`Bridge media download failed (${res.status})`);
+      let detail = '';
+      try {
+        const errJson = await res.json();
+        detail = errJson.message || '';
+      } catch {
+        detail = await res.text().catch(() => '');
+      }
+      throw new Error(`Bridge media download failed (${res.status})${detail ? `: ${detail}` : ''}`);
     }
     const data = await res.json();
     if (!data.success || !data.path) {
